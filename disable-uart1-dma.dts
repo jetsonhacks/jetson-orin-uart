@@ -1,0 +1,14 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    overlay-name = "Disable UART1 DMA";
+    fragment@0 {
+        target-path = "/bus@0/serial@3100000";
+        delete_prop = "dmas", "dma-names";
+
+        __overlay__ {
+             status = "okay";
+        };
+    };
+};
