@@ -10,8 +10,8 @@ Hardware setup required:
   expansion header before running this test. Remove the jumper afterwards.
 
 Usage:
-  sudo python3 loopback_test.py
-  sudo python3 loopback_test.py --port /dev/ttyTHS1 --baud 115200
+  python3 loopback_test.py
+  python3 loopback_test.py --port /dev/ttyTHS1 --baud 115200
 """
 
 import argparse
@@ -85,14 +85,14 @@ def check_port_permissions(port: str) -> None:
     if not (in_port_group or in_dialout_group) or not group_readable:
         print(f"WARNING: You may not have permission to access {port}.")
         print()
-        print("To fix this, add your user to the dialout group:")
+        print("Add your user to the dialout group:")
         print(f"  sudo usermod -aG dialout $USER")
         print()
-        print("Then log out and back in (or run: newgrp dialout), and re-run:")
-        print(f"  python3 loopback_test.py")
+        print("Then activate the membership in your current shell:")
+        print(f"  newgrp dialout")
         print()
-        print("Alternatively, run the test with sudo:")
-        print(f"  sudo python3 loopback_test.py")
+        print("Then re-run:")
+        print(f"  python3 loopback_test.py")
         print()
         # Don't exit — let serial.Serial raise PermissionError if it actually fails
 

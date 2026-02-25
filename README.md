@@ -67,7 +67,7 @@ sudo reboot
 The script will:
 1. Compile `disable-uart1-dma.dts` into `disable-uart1-dma.dtbo` and copy it to `/boot/` (falls back to the pre-built `.dtbo` if `dtc` is unavailable)
 2. Auto-detect your board's FDT using `find_fdt.py`
-3. Edit `/boot/extlinux/extlinux.conf` to load the overlay at boot
+3. Add a new `UARTFix` boot entry to `/boot/extlinux/extlinux.conf` based on the current default configuration, set it as the new default, and leave the previous entry intact as a fallback in the boot menu
 
 A timestamped backup of `extlinux.conf` is created before any changes are made.
 
@@ -104,18 +104,19 @@ pip3 install pyserial
 
 **Hardware setup:** Connect a jumper wire between **TX (pin 8)** and **RX (pin 10)** on the 40-pin expansion header before running the test. Remove it afterwards.
 
-**Permissions:** You must either run the test with `sudo`, or add your user to the `dialout` group:
+**Permissions:** Add your user to the `dialout` group to access the UART port without sudo:
 
 ```bash
 sudo usermod -aG dialout $USER
+newgrp dialout
 ```
 
-Then log out and back in for the change to take effect.
+`newgrp dialout` activates the group membership in your current shell immediately, without needing to log out and back in.
 
 **Run the test:**
 
 ```bash
-sudo python3 loopback_test.py
+python3 loopback_test.py
 ```
 
 On a fixed board you will see:
@@ -142,7 +143,7 @@ Options:
 
 ## ⚠️ Warning: jetson-io Compatibility
 
-The `jetson-io` tool **overwrites the `OVERLAYS` line** in `extlinux.conf` when you use it to configure the expansion header. If you run `jetson-io` after installing this fix, you must re-run the install script to restore the overlay:
+The `jetson-io` tool **adds a new entry and updates the `DEFAULT` line** in `extlinux.conf` when you use it to configure the expansion header. If you run `jetson-io` after installing this fix, its new entry will become the default and the UART fix will no longer be active. Re-run the install script to add a new `UARTFix` entry on top of jetson-io's configuration:
 
 ```bash
 sudo bash install.sh
@@ -153,14 +154,16 @@ sudo reboot
 
 ## Uninstallation
 
-Open `/boot/extlinux/extlinux.conf` in a text editor and remove `,/boot/disable-uart1-dma.dtbo` from the `OVERLAYS` line. If the OVERLAYS line only contained this overlay, remove the entire line.
+Open `/boot/extlinux/extlinux.conf` and either revert the `DEFAULT` line to your previous label, or remove the `UARTFix` stanza entirely.
 
 ```bash
 sudo nano /boot/extlinux/extlinux.conf
 sudo reboot
 ```
 
-The DMA bug will return after rebooting without the overlay.
+To revert to the previous default, change the `DEFAULT` line at the top of the file back to its original label (e.g. `primary` or `JetsonIO`). The `UARTFix` entry can then be left in place or deleted — it will no longer be the default.
+
+The DMA bug will return after rebooting without the overlay active.
 
 ---
 

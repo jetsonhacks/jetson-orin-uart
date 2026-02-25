@@ -6,8 +6,9 @@
 #      (offers to install dtc if missing; falls back to pre-built .dtbo if declined)
 #   2. Copies the .dtbo to /boot/
 #   3. Detects the board's FDT using find_fdt.py
-#   4. Edits /boot/extlinux/extlinux.conf to append the overlay to the OVERLAYS
-#      line (or adds one), and ensures an FDT line is present
+#   4. Adds a new 'UARTFix' boot entry to /boot/extlinux/extlinux.conf based
+#      on the current default, sets it as the new DEFAULT, and leaves the
+#      previous entry intact as a fallback in the boot menu
 #
 # Usage:
 #   sudo bash install.sh
@@ -81,39 +82,75 @@ detect_fdt() {
 }
 
 # ── step 3: update extlinux.conf ──────────────────────────────────────────────
+
+# Extract the full stanza for a given LABEL from extlinux.conf.
+# A stanza runs from its LABEL line to the line before the next LABEL (or EOF).
+extract_stanza() {
+    local label="$1" file="$2"
+    awk "/^[[:space:]]*LABEL[[:space:]]+${label}([[:space:]]|$)/{found=1}
+         found && /^[[:space:]]*LABEL[[:space:]]/ && !/^[[:space:]]*LABEL[[:space:]]+${label}([[:space:]]|$)/{found=0}
+         found{print}" "${file}"
+}
+
 update_extlinux() {
     [[ -f "${EXTLINUX}" ]] || die "${EXTLINUX} not found."
+
+    # ── idempotency check ─────────────────────────────────────────────────────
+    if grep -qF "${OVERLAY_PATH}" "${EXTLINUX}"; then
+        info "Overlay already present in extlinux.conf — nothing to do."
+        return
+    fi
 
     # Back up before touching
     local backup="${EXTLINUX}.bak.$(date +%Y%m%d%H%M%S)"
     cp "${EXTLINUX}" "${backup}"
     info "Backed up extlinux.conf → ${backup}"
 
-    # ── FDT line ──────────────────────────────────────────────────────────────
-    if grep -qE "^\s*FDT\s" "${EXTLINUX}"; then
-        info "FDT line already present — not modified."
+    # ── find the current default label ────────────────────────────────────────
+    local current_default
+    current_default="$(grep -E "^\s*DEFAULT\s" "${EXTLINUX}" | awk '{print $2}' | head -1)"
+    [[ -n "${current_default}" ]] || die "Could not find DEFAULT label in ${EXTLINUX}"
+    info "Current default label: ${current_default}"
+
+    # ── extract the current default stanza ───────────────────────────────────
+    local stanza
+    stanza="$(extract_stanza "${current_default}" "${EXTLINUX}")"
+    [[ -n "${stanza}" ]] || die "Could not extract stanza for label '${current_default}'"
+
+    # ── build the new stanza ──────────────────────────────────────────────────
+    local new_label="UARTFix"
+    local timestamp
+    timestamp="$(date +%Y-%m-%d-%H%M%S)"
+
+    # Replace the LABEL and MENU LABEL lines; ensure FDT and OVERLAYS are set
+    local new_stanza
+    new_stanza="$(echo "${stanza}" \
+        | sed "s|^[[:space:]]*LABEL[[:space:]].*|LABEL ${new_label}|" \
+        | sed "s|MENU LABEL.*|MENU LABEL UART DMA Fix [${timestamp}]|")"
+
+    # Add or update FDT line
+    if echo "${new_stanza}" | grep -qE "^\s*FDT\s"; then
+        : # already present — leave it
     else
-        info "Adding FDT line for ${FDT}"
-        # Insert after the LABEL line (first occurrence)
-        sed -i "/^\s*LABEL\s/a\\      FDT ${FDT}" "${EXTLINUX}"
+        new_stanza="$(echo "${new_stanza}" \
+            | sed "/^\s*LINUX\s/a\\      FDT ${FDT}")"
     fi
 
-    # ── OVERLAYS line ─────────────────────────────────────────────────────────
-    if grep -qF "${OVERLAY_PATH}" "${EXTLINUX}"; then
-        info "Overlay already present in extlinux.conf — nothing to do."
-        return
-    fi
-
-    if grep -qE "^\s*OVERLAYS\s" "${EXTLINUX}"; then
-        info "Appending overlay to existing OVERLAYS line."
-        # Append ,/boot/disable-uart1-dma.dtbo to the OVERLAYS value
-        sed -i "s|^\(\s*OVERLAYS\s.*\)$|\1,${OVERLAY_PATH}|" "${EXTLINUX}"
+    # Add or append OVERLAYS line
+    if echo "${new_stanza}" | grep -qE "^\s*OVERLAYS\s"; then
+        new_stanza="$(echo "${new_stanza}" \
+            | sed "s|^\(\s*OVERLAYS\s.*\)$|\1,${OVERLAY_PATH}|")"
     else
-        info "No OVERLAYS line found — adding one."
-        sed -i "/^\s*FDT\s/a\\      OVERLAYS ${OVERLAY_PATH}" "${EXTLINUX}"
+        new_stanza="$(echo "${new_stanza}" \
+            | sed "/^\s*FDT\s/a\\      OVERLAYS ${OVERLAY_PATH}")"
     fi
 
-    info "extlinux.conf updated."
+    # ── write new stanza and update DEFAULT ───────────────────────────────────
+    printf "\n%s\n" "${new_stanza}" >> "${EXTLINUX}"
+    sed -i "s|^\(\s*DEFAULT\s\).*|\1${new_label}|" "${EXTLINUX}"
+
+    info "Added new boot entry '${new_label}' and set it as DEFAULT."
+    info "Previous entry '${current_default}' remains as a fallback in the boot menu."
 }
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -128,6 +165,9 @@ main() {
     echo " Installation complete."
     echo " Reboot to apply the overlay:"
     echo "   sudo reboot"
+    echo ""
+    echo " The boot menu now has a new 'UARTFix' entry set as default."
+    echo " Your previous boot entry remains in the menu as a fallback."
     echo ""
     echo " After rebooting, verify PIO mode with:"
     echo "   sudo dmesg | grep -i '3100000\|pio\|dma'"
